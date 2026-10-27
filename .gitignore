@@ -1,0 +1,63 @@
+# Visual Studio
+.vs/
+**/.vs/
+*.user
+*.suo
+*.VC.db
+*.VC.VC.opendb
+
+# Build output
+[Bb]in/
+[Oo]bj/
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+out/
+
+# Compiled files
+*.exe
+*.dll
+*.obj
+*.pdb
+*.ilk
+*.pch
+*.idb
+*.ipch
+*.sdf
+*.opensdf
+
+# Temporary files
+*.log
+*.tmp
+*.cache
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+
+# Local database files
+*.db
+*.sqlite
+*.sqlite3
+*.db-shm
+*.db-wal
+*.sqlite-shm
+*.sqlite-wal
+
+# Visual Studio resource editor
+*.aps
+
+# Additional Visual Studio generated files
+*.opendb
+*.VC.db-shm
+*.VC.db-wal
+
+# SQLite temporary files
+*.db-journal
+
+# Local configuration and credentials
+*.pem
+*.key
+secrets/
