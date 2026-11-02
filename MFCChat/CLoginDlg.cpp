@@ -6,7 +6,6 @@
 #include "CLoginDlg.h"
 #include "afxdialogex.h"
 #include "CRegisterDlg.h"
-#include "Database.h"
 #include <atlconv.h>
 #include <string>
 #include "AutoRun.h"

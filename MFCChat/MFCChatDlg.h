@@ -5,6 +5,7 @@
 
 #include "ChatProtocol.h"
 #include "TcpChatClient.h"
+#include <string>
 
 
 // CMFCChatDlg dialog
@@ -46,6 +47,12 @@ protected:
 
 	// Receive Windows Message
 	afx_msg BOOL OnCopyData(CWnd* pWnd, COPYDATASTRUCT* pCopyDataStruct);
+
+	afx_msg LRESULT OnTcpResponse(WPARAM wParam, LPARAM lParam);
+
+	void DisplayConversationResponse(const std::string& payload);
+
+	void DisplayHistoryResponse(const std::string& payload);
 
 	CListCtrl m_conversationList;
 	CMapStringToString m_fakeChats;

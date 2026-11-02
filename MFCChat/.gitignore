@@ -1,0 +1,106 @@
+## ---- Visual Studio folders & user files ----
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.vcxproj.user
+*.rsuser
+*.VC.db
+*.VC.VC.opendb
+*.opendb
+*.ipch
+ipch/
+*.aps
+enc_temp_folder/
+.vscode/
+
+## ---- Build output ----
+[Dd]ebug/
+[Dd]ebugPublic/
+[Rr]elease/
+[Rr]eleases/
+x64/
+x86/
+Win32/
+ARM/
+ARM64/
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Ll]ogs/
+
+## ---- Compiler / linker artifacts ----
+*.obj
+*.o
+*.pch
+*.pdb
+*.idb
+*.ilk
+*.exp
+*.lib
+*.dll
+*.exe
+*.res
+*.tlog
+*.lastbuildstate
+*.iobj
+*.ipdb
+*.log
+*.tmp
+*.cache
+*.sbr
+*.bsc
+*.pgc
+*.pgd
+*.rsp
+*.vspscc
+*.vssscc
+*_i.c
+*_p.c
+*_h.h
+*.tlb
+*.tli
+*.tlh
+
+## ---- Code analysis / test results ----
+*.sarif
+*.coverage
+*.coveragexml
+TestResults/
+[Tt]est[Rr]esult*/
+BenchmarkDotNet.Artifacts/
+
+## ---- SQLite database (contains real accounts & messages) ----
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+*.sqlite
+*.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+
+## ---- Secrets / local config ----
+.env
+*.env
+secrets.*
+*.pfx
+*.pem
+*.key
+
+## ---- OS / editor junk ----
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+.DS_Store
+*.swp
+*~
+*.bak
+*.orig
+*.rej
+
+## ---- Keep these tracked (examples; no need to uncomment) ----
+## *.sln, *.vcxproj, *.vcxproj.filters, *.rc, resource.h, *.cpp, *.h
+## sqlite3.c, sqlite3.h, json.hpp (bundled third-party sources)

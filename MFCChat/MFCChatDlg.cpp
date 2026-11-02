@@ -1,5 +1,4 @@
-﻿
-// MFCChatDlg.cpp : implementation file
+﻿// MFCChatDlg.cpp : implementation file
 //
 
 #include "pch.h"
@@ -7,18 +6,15 @@
 #include "MFCChat.h"
 #include "MFCChatDlg.h"
 #include "afxdialogex.h"
-#include "Database.h"
 #include <atlconv.h>
 #include <vector>
 #include "TcpChatClient.h"
 #include <string>
-
-static const char* DATABASE_PATH = "D:\\Work\\CMC\\MFCChat\\chat.db";
+#include "json.hpp"
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
 #endif
-
 
 // CAboutDlg dialog used for App About
 
@@ -27,12 +23,12 @@ class CAboutDlg : public CDialogEx
 public:
 	CAboutDlg();
 
-// Dialog Data
+	// Dialog Data
 #ifdef AFX_DESIGN_TIME
 	enum { IDD = IDD_ABOUTBOX };
 #endif
 
-	protected:
+protected:
 	virtual void DoDataExchange(CDataExchange* pDX);    // DDX/DDV support
 
 // Implementation
@@ -77,6 +73,7 @@ BEGIN_MESSAGE_MAP(CMFCChatDlg, CDialogEx)
 	ON_BN_CLICKED(IDC_BUTTON_SEND, &CMFCChatDlg::OnBnClickedButtonSend)
 	ON_NOTIFY(LVN_ITEMCHANGED, IDC_LIST_CONVERSATION, &CMFCChatDlg::OnLvnItemchangedListConversation)
 	ON_MESSAGE(WM_APP_TCP_MESSAGE, &CMFCChatDlg::OnTcpMessage)
+	ON_MESSAGE(WM_APP_TCP_RESPONSE, &CMFCChatDlg::OnTcpResponse)
 END_MESSAGE_MAP()
 
 // CMFCChatDlg message handlers
@@ -145,59 +142,6 @@ BOOL CMFCChatDlg::OnInitDialog()
 	m_conversationList.InsertColumn(
 		2, L"Thời gian", LVCFMT_LEFT, 120);
 
-	Database db;
-
-	if (!db.Open(DATABASE_PATH))
-	{
-		AfxMessageBox(L"Cannot open chat database.");
-		return FALSE;
-	}
-
-	CT2A currentUser(m_currentUser, CP_UTF8);
-	std::vector<ConversationSummary> conversations;
-
-	bool loaded = db.GetConversationSummaries(
-		currentUser,
-		conversations
-	);
-
-	db.Close();
-
-	if (!loaded)
-	{
-		AfxMessageBox(L"Cannot load conversation list.");
-		return FALSE;
-	}
-
-	for (const auto& conversation : conversations)
-	{
-		CA2T usernameText(conversation.username.c_str(), CP_UTF8);
-		CA2T messageText(conversation.lastMessage.c_str(), CP_UTF8);
-		CA2T timeText(conversation.lastSentAt.c_str(), CP_UTF8);
-
-		CString preview(static_cast<LPCTSTR>(messageText));
-		preview.Replace(L"\r", L" ");
-		preview.Replace(L"\n", L" ");
-
-		if (preview.GetLength() > 35)
-			preview = preview.Left(32) + L"...";
-
-		int index = m_conversationList.InsertItem(
-			m_conversationList.GetItemCount(),
-			static_cast<LPCTSTR>(usernameText)
-		);
-
-		m_conversationList.SetItemText(
-			index, 1, preview
-		);
-
-		m_conversationList.SetItemText(
-			index, 2, static_cast<LPCTSTR>(timeText)
-		);
-
-		m_fakeChats[static_cast<LPCTSTR>(usernameText)] = preview;
-	}
-
 	CString messageName;
 	messageName.Format(L"MFC_CHAT_USER_%s", m_currentUser.GetString());
 
@@ -238,6 +182,14 @@ BOOL CMFCChatDlg::OnInitDialog()
 
 		AfxMessageBox(message);
 	}
+	else
+	{
+		// Đăng nhập TCP thành công: lấy danh sách người dùng/hội thoại ngay.
+		// Trước đây không có chỗ nào gọi hàm này sau khi login, nên danh sách
+		// luôn trống cho tới khi có tin nhắn đến.
+		RefreshConversationList();
+	}
+
 	return TRUE;  // return TRUE  unless you set the focus to a control
 }
 
@@ -293,6 +245,7 @@ HCURSOR CMFCChatDlg::OnQueryDragIcon()
 void CMFCChatDlg::OnBnClickedButtonSend()
 {
 	CString message;
+
 	GetDlgItemText(IDC_EDIT_MESSAGE, message);
 	message.Trim();
 
@@ -301,58 +254,40 @@ void CMFCChatDlg::OnBnClickedButtonSend()
 
 	if (m_currentChatUser.IsEmpty())
 	{
-		AfxMessageBox(L"Please select a conversation first.");
+		AfxMessageBox(
+			L"Please select a conversation first."
+		);
+
 		return;
 	}
 
 	if (!m_tcpClient.IsConnected())
 	{
-		AfxMessageBox(L"Not connected to TCP server.");
+		AfxMessageBox(
+			L"Not connected to TCP server."
+		);
+
 		return;
 	}
 
 	CT2A receiverUtf8(m_currentChatUser, CP_UTF8);
 	CT2A contentUtf8(message, CP_UTF8);
-	CT2A senderUtf8(m_currentUser, CP_UTF8);
 
-	const char* receiver =
-		static_cast<const char*>(receiverUtf8);
+	std::string receiver(
+		static_cast<const char*>(receiverUtf8)
+	);
 
-	const char* content =
-		static_cast<const char*>(contentUtf8);
-
-	const char* sender =
-		static_cast<const char*>(senderUtf8);
+	std::string content(
+		static_cast<const char*>(contentUtf8)
+	);
 
 	if (!m_tcpClient.SendMessageTo(receiver, content))
 	{
-		AfxMessageBox(L"Failed to send message through TCP.");
-		return;
-	}
-
-	m_tcpClient.SendEchoProbeAsync(content);
-
-	Database db;
-
-	if (!db.Open(DATABASE_PATH))
-	{
 		AfxMessageBox(
-			L"Message was sent, but could not be saved to database.");
+			L"Failed to send message through TCP."
+		);
+
 		return;
-	}
-
-	bool saved = db.SaveMessage(sender, receiver, content);
-	db.Close();
-
-	if (!saved)
-	{
-		AfxMessageBox(
-			L"Message was sent, but could not be saved to database.");
-	}
-	else
-	{
-		RefreshConversationList();
-		LoadChatHistory();
 	}
 
 	SetDlgItemText(IDC_EDIT_MESSAGE, L"");
@@ -489,149 +424,34 @@ BOOL CMFCChatDlg::SendChatMessage(const CString& message)
 
 void CMFCChatDlg::LoadChatHistory()
 {
-	m_messageHistory.Empty();
-
 	if (m_currentChatUser.IsEmpty())
 	{
+		m_messageHistory.Empty();
 		SetDlgItemText(IDC_RICHEDIT_MESSAGE, L"");
 		return;
 	}
 
-	Database db;
-
-	if (!db.Open(DATABASE_PATH))
-	{
-		AfxMessageBox(L"Cannot open chat database.");
-		SetDlgItemText(IDC_RICHEDIT_MESSAGE, L"");
+	if (!m_tcpClient.IsConnected())
 		return;
-	}
 
-	CT2A currentUser(m_currentUser, CP_UTF8);
-	CT2A chatUser(m_currentChatUser, CP_UTF8);
+	CT2A usernameUtf8(m_currentChatUser, CP_UTF8);
 
-	std::vector<MessageRecord> messages;
-
-	bool loaded = db.LoadMessages(currentUser, chatUser, messages);
-
-	db.Close();
-
-	if (!loaded)
-	{
-		AfxMessageBox(L"Cannot load chat history.");
-		SetDlgItemText(IDC_RICHEDIT_MESSAGE, L"");
-		return;
-	}
-
-	for (const auto& message : messages)
-	{
-		CA2T sender(message.senderUsername.c_str(), CP_UTF8);
-		CA2T content(message.content.c_str(), CP_UTF8);
-		CA2T sentAt(message.sentAt.c_str(), CP_UTF8);
-
-		CString displayMessage;
-		displayMessage.Format(
-			L"[%s] %s: %s\r\n",
-			static_cast<LPCTSTR>(sentAt),
-			static_cast<LPCTSTR>(sender),
-			static_cast<LPCTSTR>(content)
-		);
-
-		m_messageHistory += displayMessage;
-	}
-
-	SetDlgItemText(IDC_RICHEDIT_MESSAGE, m_messageHistory);
-
-	CWnd* pChat = GetDlgItem(IDC_RICHEDIT_MESSAGE);
-
-	if (pChat != nullptr)
-	{
-		pChat->SetRedraw(FALSE);
-
-		pChat->SendMessage(
-			EM_SETSEL,
-			static_cast<WPARAM>(-1),
-			static_cast<LPARAM>(-1)
-		);
-
-		pChat->SendMessage(EM_SCROLLCARET, 0, 0);
-		pChat->SendMessage(WM_VSCROLL, SB_BOTTOM, 0);
-
-		pChat->SetRedraw(TRUE);
-		pChat->Invalidate();
-	}
+	m_tcpClient.RequestHistory(
+		static_cast<const char*>(usernameUtf8)
+	);
 }
-
 
 void CMFCChatDlg::RefreshConversationList()
 {
-	CString selectedUser = m_currentChatUser;
-
-	Database db;
-
-	if (!db.Open(DATABASE_PATH))
+	if (!m_tcpClient.IsConnected())
 		return;
 
-	CT2A currentUser(m_currentUser, CP_UTF8);
-	std::vector<ConversationSummary> conversations;
-
-	bool loaded = db.GetConversationSummaries(
-		currentUser,
-		conversations
-	);
-
-	db.Close();
-
-	if (!loaded)
-		return;
-
-	m_conversationList.DeleteAllItems();
-	m_fakeChats.RemoveAll();
-
-	CT2A selectedUserUtf8(selectedUser, CP_UTF8);
-	int selectedIndex = -1;
-
-	for (const auto& conversation : conversations)
-	{
-		CA2T username(conversation.username.c_str(), CP_UTF8);
-		CA2T content(conversation.lastMessage.c_str(), CP_UTF8);
-		CA2T sentAt(conversation.lastSentAt.c_str(), CP_UTF8);
-
-		CString preview(static_cast<LPCTSTR>(content));
-		preview.Replace(L"\r", L" ");
-		preview.Replace(L"\n", L" ");
-
-		if (preview.GetLength() > 35)
-			preview = preview.Left(32) + L"...";
-
-		int index = m_conversationList.InsertItem(
-			m_conversationList.GetItemCount(),
-			static_cast<LPCTSTR>(username)
-		);
-
-		m_conversationList.SetItemText(index, 1, preview);
-		m_conversationList.SetItemText(
-			index, 2, static_cast<LPCTSTR>(sentAt));
-
-		m_fakeChats[static_cast<LPCTSTR>(username)] = preview;
-
-		if (conversation.username ==
-			static_cast<LPCSTR>(selectedUserUtf8))
-		{
-			selectedIndex = index;
-		}
-	}
-
-	if (selectedIndex >= 0)
-	{
-		m_conversationList.SetItemState(selectedIndex, LVIS_SELECTED | LVIS_FOCUSED, LVIS_SELECTED | LVIS_FOCUSED
-		);
-
-		m_conversationList.EnsureVisible(
-			selectedIndex, FALSE);
-	}
+	m_tcpClient.RequestConversations();
 }
 
-LRESULT CMFCChatDlg::OnTcpMessage(WPARAM wParam, LPARAM lParam)
+LRESULT CMFCChatDlg::OnTcpMessage(
+	WPARAM wParam,
+	LPARAM lParam)
 {
 	UNREFERENCED_PARAMETER(wParam);
 
@@ -643,13 +463,262 @@ LRESULT CMFCChatDlg::OnTcpMessage(WPARAM wParam, LPARAM lParam)
 
 	CString sender = CA2T(incoming->sender.c_str(), CP_UTF8);
 
-	CString content = CA2T(incoming->content.c_str(), CP_UTF8);
+	if (!incoming->isGroup)
+	{
+		RefreshConversationList();
 
-	RefreshConversationList();
+		if (sender == m_currentChatUser)
+		{
+			m_tcpClient.MarkMessageRead(
+				incoming->messageId,
+				false
+			);
 
-	if (sender == m_currentChatUser)
-		LoadChatHistory();
+			LoadChatHistory();
+		}
+	}
 
 	delete incoming;
+
 	return 0;
+}
+
+LRESULT CMFCChatDlg::OnTcpResponse(
+	WPARAM wParam,
+	LPARAM lParam)
+{
+	UNREFERENCED_PARAMETER(wParam);
+
+	TcpResponse* response =
+		reinterpret_cast<TcpResponse*>(lParam);
+
+	if (response == nullptr)
+		return 0;
+
+	if (response->action == "CONVERSATIONS_RESULT")
+	{
+		DisplayConversationResponse(response->payload);
+	}
+	else if (response->action == "HISTORY_RESULT")
+	{
+		DisplayHistoryResponse(response->payload);
+	}
+	else if (response->action == "SEND_MESSAGE_RESULT")
+	{
+		bool saved = false;
+		std::string errorText = "Unknown error";
+
+		try
+		{
+			nlohmann::json result =
+				nlohmann::json::parse(response->payload);
+
+			saved = result.value("success", false);
+
+			if (!saved)
+			{
+				errorText = result.value(
+					"message", std::string("Unknown error"));
+			}
+		}
+		catch (const nlohmann::json::exception&)
+		{
+			errorText = "Invalid response from server";
+		}
+
+		if (saved)
+		{
+			// Server đã lưu tin: tải lại khung chat để người gửi thấy
+			// tin của chính mình, và cập nhật "Tin nhắn cuối" trong danh sách.
+			LoadChatHistory();
+			RefreshConversationList();
+		}
+		else
+		{
+			CA2T errorWide(errorText.c_str(), CP_UTF8);
+
+			CString errorMessage;
+			errorMessage.Format(
+				L"Gửi tin nhắn thất bại: %s",
+				static_cast<LPCTSTR>(errorWide));
+
+			AfxMessageBox(errorMessage);
+		}
+	}
+
+	delete response;
+
+	return 0;
+}
+
+void CMFCChatDlg::DisplayConversationResponse(
+	const std::string& payload)
+{
+	using json = nlohmann::json;
+
+	json response;
+
+	try
+	{
+		response = json::parse(payload);
+	}
+	catch (const json::exception&)
+	{
+		return;
+	}
+
+	if (!response.value("success", false) ||
+		!response.contains("conversations") ||
+		!response["conversations"].is_array())
+	{
+		return;
+	}
+
+	CString previousSelection = m_currentChatUser;
+
+	m_conversationList.DeleteAllItems();
+	m_fakeChats.RemoveAll();
+
+	int selectedIndex = -1;
+
+	for (const auto& item : response["conversations"])
+	{
+		std::string username =
+			item.value("username", std::string());
+
+		std::string lastMessage =
+			item.value("lastMessage", std::string());
+
+		std::string lastSentAt =
+			item.value("lastSentAt", std::string());
+
+		CA2T usernameText(username.c_str(), CP_UTF8);
+		CA2T messageText(lastMessage.c_str(), CP_UTF8);
+		CA2T timeText(lastSentAt.c_str(), CP_UTF8);
+
+		CString preview(static_cast<LPCTSTR>(messageText));
+
+		preview.Replace(L"\r", L" ");
+		preview.Replace(L"\n", L" ");
+
+		if (preview.GetLength() > 35)
+			preview = preview.Left(32) + L"...";
+
+		int index = m_conversationList.InsertItem(
+			m_conversationList.GetItemCount(),
+			static_cast<LPCTSTR>(usernameText)
+		);
+
+		m_conversationList.SetItemText(index, 1, preview);
+
+		m_conversationList.SetItemText(
+			index,
+			2,
+			static_cast<LPCTSTR>(timeText)
+		);
+
+		m_fakeChats[static_cast<LPCTSTR>(usernameText)] = preview;
+
+		if (usernameText == previousSelection)
+			selectedIndex = index;
+	}
+
+	if (selectedIndex < 0 &&
+		m_conversationList.GetItemCount() > 0)
+	{
+		selectedIndex = 0;
+	}
+
+	if (selectedIndex >= 0)
+	{
+		m_conversationList.SetItemState(
+			selectedIndex,
+			LVIS_SELECTED | LVIS_FOCUSED,
+			LVIS_SELECTED | LVIS_FOCUSED
+		);
+
+		m_conversationList.EnsureVisible(selectedIndex, FALSE);
+
+		m_currentChatUser =
+			m_conversationList.GetItemText(selectedIndex, 0);
+
+		SetDlgItemText(IDC_STATIC_CHAT_USER, m_currentChatUser);
+
+		LoadChatHistory();
+	}
+}
+
+void CMFCChatDlg::DisplayHistoryResponse(
+	const std::string& payload)
+{
+	using json = nlohmann::json;
+
+	json response;
+
+	try
+	{
+		response = json::parse(payload);
+	}
+	catch (const json::exception&)
+	{
+		return;
+	}
+
+	if (!response.value("success", false) ||
+		!response.contains("messages") ||
+		!response["messages"].is_array())
+	{
+		return;
+	}
+
+	std::string otherUsername =
+		response.value("otherUsername", std::string());
+
+	CT2A currentChatUtf8(m_currentChatUser, CP_UTF8);
+
+	if (otherUsername !=
+		static_cast<const char*>(currentChatUtf8))
+	{
+		return;
+	}
+
+	m_messageHistory.Empty();
+
+	for (const auto& item : response["messages"])
+	{
+		std::string sender =
+			item.value("sender", std::string());
+
+		std::string content =
+			item.value("content", std::string());
+
+		std::string sentAt =
+			item.value("sentAt", std::string());
+
+		CA2T senderText(sender.c_str(), CP_UTF8);
+		CA2T contentText(content.c_str(), CP_UTF8);
+		CA2T timeText(sentAt.c_str(), CP_UTF8);
+
+		CString line;
+
+		line.Format(
+			L"[%s] %s: %s\r\n",
+			static_cast<LPCTSTR>(timeText),
+			static_cast<LPCTSTR>(senderText),
+			static_cast<LPCTSTR>(contentText)
+		);
+
+		m_messageHistory += line;
+	}
+
+	SetDlgItemText(IDC_RICHEDIT_MESSAGE, m_messageHistory);
+
+	CWnd* chat = GetDlgItem(IDC_RICHEDIT_MESSAGE);
+
+	if (chat != nullptr)
+	{
+		chat->SendMessage(EM_SETSEL, (WPARAM)-1, (LPARAM)-1);
+		chat->SendMessage(EM_SCROLLCARET, 0, 0);
+		chat->SendMessage(WM_VSCROLL, SB_BOTTOM, 0);
+	}
 }
