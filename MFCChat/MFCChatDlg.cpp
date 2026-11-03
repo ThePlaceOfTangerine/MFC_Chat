@@ -11,6 +11,7 @@
 #include "TcpChatClient.h"
 #include <string>
 #include "json.hpp"
+#include <cstdio>
 
 #ifdef _DEBUG
 #define new DEBUG_NEW
@@ -648,6 +649,106 @@ void CMFCChatDlg::DisplayConversationResponse(
 	}
 }
 
+namespace
+{
+	// Kiểu hiển thị cho một đoạn (paragraph) trong RichEdit.
+	struct RichStyle
+	{
+		COLORREF textColor = RGB(0, 0, 0);
+		COLORREF backColor = CLR_INVALID;  // CLR_INVALID = không tô nền
+		int      sizePt = 10;
+		bool     bold = false;
+		WORD     alignment = PFA_LEFT;     // PFA_LEFT / PFA_RIGHT / PFA_CENTER
+		LONG     leftIndent = 0;            // đơn vị twips (1/1440 inch)
+		LONG     rightIndent = 0;
+		LONG     spaceAfter = 0;
+	};
+
+	// Thêm một đoạn text vào cuối RichEdit rồi áp dụng định dạng cho đúng đoạn đó.
+	void AppendParagraph(
+		CRichEditCtrl& edit,
+		const CString& text,
+		const RichStyle& style)
+	{
+		edit.SetSel(-1, -1);
+
+		long start = 0;
+		long unused = 0;
+		edit.GetSel(start, unused);
+
+		// RichEdit 2.0 dùng '\r' làm dấu ngắt đoạn.
+		edit.ReplaceSel(text + _T("\r"));
+
+		long end = 0;
+		edit.GetSel(unused, end);
+
+		if (end <= start)
+			return;
+
+		// Chọn phần chữ (bỏ dấu ngắt đoạn ở cuối) để áp dụng định dạng.
+		edit.SetSel(start, end - 1);
+
+		CHARFORMAT2 cf = {};
+		cf.cbSize = sizeof(CHARFORMAT2);
+		cf.dwMask = CFM_COLOR | CFM_BOLD | CFM_ITALIC | CFM_SIZE |
+			CFM_FACE | CFM_BACKCOLOR;
+		cf.dwEffects = style.bold ? CFE_BOLD : 0;
+		cf.yHeight = style.sizePt * 20;
+		cf.crTextColor = style.textColor;
+		_tcscpy_s(cf.szFaceName, _T("Segoe UI"));
+
+		if (style.backColor == CLR_INVALID)
+		{
+			cf.dwEffects |= CFE_AUTOBACKCOLOR;
+		}
+		else
+		{
+			cf.crBackColor = style.backColor;
+		}
+
+		edit.SendMessage(
+			EM_SETCHARFORMAT, SCF_SELECTION, reinterpret_cast<LPARAM>(&cf));
+
+		PARAFORMAT2 pf = {};
+		pf.cbSize = sizeof(PARAFORMAT2);
+		pf.dwMask = PFM_ALIGNMENT | PFM_STARTINDENT |
+			PFM_RIGHTINDENT | PFM_SPACEAFTER;
+		pf.wAlignment = style.alignment;
+		pf.dxStartIndent = style.leftIndent;
+		pf.dxRightIndent = style.rightIndent;
+		pf.dySpaceAfter = style.spaceAfter;
+
+		edit.SendMessage(
+			EM_SETPARAFORMAT, 0, reinterpret_cast<LPARAM>(&pf));
+
+		edit.SetSel(-1, -1);
+	}
+
+	// Server lưu "YYYY-MM-DD HH:MM:SS" theo UTC -> đổi sang giờ của máy.
+	bool ParseUtcToLocal(const std::string& sentAt, SYSTEMTIME& local)
+	{
+		int y = 0, mo = 0, d = 0, h = 0, mi = 0, s = 0;
+
+		if (sscanf_s(
+			sentAt.c_str(),
+			"%d-%d-%d %d:%d:%d",
+			&y, &mo, &d, &h, &mi, &s) != 6)
+		{
+			return false;
+		}
+
+		SYSTEMTIME utc = {};
+		utc.wYear = static_cast<WORD>(y);
+		utc.wMonth = static_cast<WORD>(mo);
+		utc.wDay = static_cast<WORD>(d);
+		utc.wHour = static_cast<WORD>(h);
+		utc.wMinute = static_cast<WORD>(mi);
+		utc.wSecond = static_cast<WORD>(s);
+
+		return SystemTimeToTzSpecificLocalTime(nullptr, &utc, &local) != FALSE;
+	}
+}
+
 void CMFCChatDlg::DisplayHistoryResponse(
 	const std::string& payload)
 {
@@ -682,9 +783,62 @@ void CMFCChatDlg::DisplayHistoryResponse(
 		return;
 	}
 
+	CRichEditCtrl* pEdit =
+		static_cast<CRichEditCtrl*>(GetDlgItem(IDC_RICHEDIT_MESSAGE));
+
+	if (pEdit == nullptr)
+		return;
+
+	CRichEditCtrl& edit = *pEdit;
+
 	m_messageHistory.Empty();
 
-	for (const auto& item : response["messages"])
+	edit.SetRedraw(FALSE);
+	edit.SetReadOnly(TRUE);
+	edit.SetBackgroundColor(FALSE, RGB(250, 250, 252));
+	edit.SetWindowText(_T(""));
+
+	// ---- Các kiểu hiển thị ----
+	RichStyle dateStyle;
+	dateStyle.textColor = RGB(140, 140, 140);
+	dateStyle.sizePt = 8;
+	dateStyle.alignment = PFA_CENTER;
+	dateStyle.spaceAfter = 120;
+
+	RichStyle headerStyle;               // "tên + giờ"
+	headerStyle.textColor = RGB(37, 150, 190);
+	headerStyle.sizePt = 8;
+	headerStyle.bold = true;
+
+	RichStyle myBody;                    // tin của mình: bên phải
+	myBody.textColor = RGB(13, 12, 8);
+	myBody.sizePt = 11;
+	myBody.alignment = PFA_RIGHT;
+	myBody.leftIndent = 1800;
+	myBody.rightIndent = 100;
+	myBody.spaceAfter = 160;
+
+	RichStyle otherBody;                 // tin người khác: bên trái
+	otherBody.textColor = RGB(13, 12, 8);
+	otherBody.sizePt = 11;
+	otherBody.alignment = PFA_LEFT;
+	otherBody.leftIndent = 100;
+	otherBody.rightIndent = 1800;
+	otherBody.spaceAfter = 160;
+
+	const auto& messages = response["messages"];
+
+	if (messages.empty())
+	{
+		AppendParagraph(
+			edit,
+			_T("Chưa có tin nhắn. Hãy bắt đầu cuộc trò chuyện!"),
+			dateStyle);
+	}
+
+	int lastYear = -1, lastMonth = -1, lastDay = -1;
+
+	for (const auto& item : messages)
 	{
 		std::string sender =
 			item.value("sender", std::string());
@@ -699,26 +853,74 @@ void CMFCChatDlg::DisplayHistoryResponse(
 		CA2T contentText(content.c_str(), CP_UTF8);
 		CA2T timeText(sentAt.c_str(), CP_UTF8);
 
-		CString line;
+		const bool isMine =
+			m_currentUser.CompareNoCase(
+				static_cast<LPCTSTR>(senderText)) == 0;
 
-		line.Format(
-			L"[%s] %s: %s\r\n",
-			static_cast<LPCTSTR>(timeText),
-			static_cast<LPCTSTR>(senderText),
-			static_cast<LPCTSTR>(contentText)
-		);
+		SYSTEMTIME local = {};
+		const bool hasTime = ParseUtcToLocal(sentAt, local);
 
-		m_messageHistory += line;
+		// Dòng phân cách khi sang ngày mới.
+		if (hasTime &&
+			(local.wYear != lastYear ||
+				local.wMonth != lastMonth ||
+				local.wDay != lastDay))
+		{
+			CString dateLabel;
+			dateLabel.Format(
+				_T("—  %02d/%02d/%04d  —"),
+				local.wDay, local.wMonth, local.wYear);
+
+			AppendParagraph(edit, dateLabel, dateStyle);
+
+			lastYear = local.wYear;
+			lastMonth = local.wMonth;
+			lastDay = local.wDay;
+		}
+
+		CString timeLabel;
+
+		if (hasTime)
+		{
+			timeLabel.Format(_T("%02d:%02d"), local.wHour, local.wMinute);
+		}
+		else
+		{
+			timeLabel = static_cast<LPCTSTR>(timeText);
+		}
+
+		CString header;
+
+		if (isMine)
+		{
+			header = timeLabel;
+		}
+		else
+		{
+			header.Format(
+				_T("%s  %s"),
+				static_cast<LPCTSTR>(senderText),
+				static_cast<LPCTSTR>(timeLabel));
+		}
+
+		RichStyle hs = headerStyle;
+		hs.alignment = isMine ? PFA_RIGHT : PFA_LEFT;
+		hs.leftIndent = isMine ? 1800 : 100;
+		hs.rightIndent = isMine ? 100 : 1800;
+
+		AppendParagraph(edit, header, hs);
+
+		// Thêm khoảng trắng hai đầu để vùng nền trông giống bong bóng chat.
+		CString body;
+		body += static_cast<LPCTSTR>(contentText);
+
+		AppendParagraph(edit, body, isMine ? myBody : otherBody);
 	}
 
-	SetDlgItemText(IDC_RICHEDIT_MESSAGE, m_messageHistory);
+	edit.SetSel(-1, -1);
+	edit.SendMessage(EM_SCROLLCARET, 0, 0);
+	edit.SendMessage(WM_VSCROLL, SB_BOTTOM, 0);
 
-	CWnd* chat = GetDlgItem(IDC_RICHEDIT_MESSAGE);
-
-	if (chat != nullptr)
-	{
-		chat->SendMessage(EM_SETSEL, (WPARAM)-1, (LPARAM)-1);
-		chat->SendMessage(EM_SCROLLCARET, 0, 0);
-		chat->SendMessage(WM_VSCROLL, SB_BOTTOM, 0);
-	}
+	edit.SetRedraw(TRUE);
+	edit.Invalidate();
 }
