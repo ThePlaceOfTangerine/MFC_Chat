@@ -48,8 +48,6 @@ END_MESSAGE_MAP()
 
 // CWeek1Dlg dialog
 
-
-
 CWeek1Dlg::CWeek1Dlg(CWnd* pParent /*=nullptr*/)
 	: CDialogEx(IDD_WEEK1_DIALOG, pParent)
 {
