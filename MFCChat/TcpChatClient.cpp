@@ -674,3 +674,11 @@ bool TcpChatClient::RequestHistory(
         {"otherUsername", otherUsername}
         }.dump());
 }
+
+bool TcpChatClient::SendRaw(const std::string& jsonPayload)
+{
+    if (!IsConnected())
+        return false;
+
+    return SendFrame(jsonPayload);
+}

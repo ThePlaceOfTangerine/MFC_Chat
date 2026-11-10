@@ -159,6 +159,20 @@ bool Database::Initialize()
 
         CREATE INDEX IF NOT EXISTS idx_group_receipts_pending
         ON group_message_receipts(recipient_id, delivered_at);
+
+        CREATE TABLE IF NOT EXISTS attachments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            uploader_id INTEGER NOT NULL,
+            kind TEXT NOT NULL,
+            file_name TEXT NOT NULL,
+            size INTEGER NOT NULL,
+            stored_name TEXT NOT NULL DEFAULT '',
+            recipient_id INTEGER,
+            group_id INTEGER,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+
+            FOREIGN KEY (uploader_id) REFERENCES users(id)
+        );
     )";
 
     char* errMessage = nullptr;
@@ -184,13 +198,17 @@ bool Database::Initialize()
     return MigrateSchema();
 }
 
-// Migration chạy một lần, được theo dõi bằng PRAGMA user_version.
+// Migration chạy một lần cho mỗi phiên bản, theo dõi bằng PRAGMA user_version.
 //   version 1: gộp các dòng conversations bị trùng (do thiếu UNIQUE)
 //              rồi tạo UNIQUE INDEX cho (user1_id, user2_id).
+//   version 2: thêm cột users.avatar_version (bảng attachments được tạo
+//              trong Initialize()).
 bool Database::MigrateSchema()
 {
     if (m_db == nullptr)
         return false;
+
+    const int latestVersion = 2;
 
     auto readVersion = [this]() -> int
     {
@@ -208,8 +226,33 @@ bool Database::MigrateSchema()
         return v;
     };
 
-    // Đường nhanh: đã migrate rồi thì không cần khóa ghi.
-    if (readVersion() >= 1)
+    auto columnExists = [this](const char* table, const char* column) -> bool
+    {
+        std::string sql = std::string("PRAGMA table_info(") + table + ");";
+        sqlite3_stmt* s = nullptr;
+        bool found = false;
+
+        if (sqlite3_prepare_v2(m_db, sql.c_str(), -1, &s, nullptr) == SQLITE_OK)
+        {
+            while (sqlite3_step(s) == SQLITE_ROW)
+            {
+                const unsigned char* name = sqlite3_column_text(s, 1);
+
+                if (name != nullptr &&
+                    std::string(reinterpret_cast<const char*>(name)) == column)
+                {
+                    found = true;
+                    break;
+                }
+            }
+        }
+
+        sqlite3_finalize(s);
+        return found;
+    };
+
+    // Đường nhanh: đã ở phiên bản mới nhất thì không cần khóa ghi.
+    if (readVersion() >= latestVersion)
         return true;
 
     if (sqlite3_exec(m_db, "BEGIN IMMEDIATE;", nullptr, nullptr, nullptr)
@@ -220,29 +263,16 @@ bool Database::MigrateSchema()
         return false;
     }
 
-    int version = 0;
-    sqlite3_stmt* stmt = nullptr;
+    // Đọc lại trong transaction: thread khác có thể vừa migrate xong.
+    const int version = readVersion();
 
-    if (sqlite3_prepare_v2(
-        m_db, "PRAGMA user_version;", -1, &stmt, nullptr) != SQLITE_OK)
-    {
-        sqlite3_exec(m_db, "ROLLBACK;", nullptr, nullptr, nullptr);
-        return false;
-    }
-
-    if (sqlite3_step(stmt) == SQLITE_ROW)
-        version = sqlite3_column_int(stmt, 0);
-
-    sqlite3_finalize(stmt);
-    stmt = nullptr;
-
-    if (version >= 1)
+    if (version >= latestVersion)
     {
         sqlite3_exec(m_db, "COMMIT;", nullptr, nullptr, nullptr);
         return true;
     }
 
-    const char* migrationSql = R"(
+    const char* migration1Sql = R"(
         UPDATE messages
         SET conversation_id = (
             SELECT MIN(c2.id)
@@ -268,19 +298,34 @@ bool Database::MigrateSchema()
 
         CREATE UNIQUE INDEX IF NOT EXISTS idx_conversations_pair
         ON conversations(user1_id, user2_id);
-
-        PRAGMA user_version = 1;
     )";
 
     char* errMessage = nullptr;
+    int result = SQLITE_OK;
 
-    int result = sqlite3_exec(
-        m_db,
-        migrationSql,
-        nullptr,
-        nullptr,
-        &errMessage
-    );
+    if (version < 1)
+    {
+        result = sqlite3_exec(
+            m_db, migration1Sql, nullptr, nullptr, &errMessage);
+    }
+
+    if (result == SQLITE_OK && version < 2)
+    {
+        if (!columnExists("users", "avatar_version"))
+        {
+            result = sqlite3_exec(
+                m_db,
+                "ALTER TABLE users "
+                "ADD COLUMN avatar_version INTEGER NOT NULL DEFAULT 0;",
+                nullptr, nullptr, &errMessage);
+        }
+    }
+
+    if (result == SQLITE_OK)
+    {
+        result = sqlite3_exec(
+            m_db, "PRAGMA user_version = 2;", nullptr, nullptr, &errMessage);
+    }
 
     if (result != SQLITE_OK)
     {
@@ -899,7 +944,8 @@ bool Database::GetConversationSummaries(const char* currentUsername, std::vector
             other.username,
             COALESCE(last_message.content, ''),
             COALESCE(last_message.sent_at, ''),
-            COALESCE(last_message.id, 0) AS last_id
+            COALESCE(last_message.id, 0) AS last_id,
+            other.avatar_version
         FROM users AS current_user
         JOIN users AS other
             ON other.id != current_user.id
@@ -948,6 +994,8 @@ bool Database::GetConversationSummaries(const char* currentUsername, std::vector
         item.lastMessage = content ? reinterpret_cast<const char*>(content) : "";
 
         item.lastSentAt = sentAt ? reinterpret_cast<const char*>(sentAt) : "";
+
+        item.avatarVersion = sqlite3_column_int(stmt, 4);
 
         conversations.push_back(item);
     }
@@ -1952,4 +2000,396 @@ bool Database::LoadGroupMessages(
 
     sqlite3_finalize(stmt);
     return result == SQLITE_DONE;
+}
+
+// ================= Avatar & tệp đính kèm =================
+
+namespace
+{
+    std::string ColumnString(sqlite3_stmt* stmt, int column)
+    {
+        const unsigned char* text = sqlite3_column_text(stmt, column);
+        return text ? reinterpret_cast<const char*>(text) : std::string();
+    }
+
+    void ReadAttachmentRow(sqlite3_stmt* stmt, AttachmentInfo& info)
+    {
+        info.id = sqlite3_column_int64(stmt, 0);
+        info.kind = ColumnString(stmt, 1);
+        info.fileName = ColumnString(stmt, 2);
+        info.size = sqlite3_column_int64(stmt, 3);
+        info.storedName = ColumnString(stmt, 4);
+    }
+
+    bool LoadAttachmentById(
+        sqlite3* db,
+        int64_t attachmentId,
+        AttachmentInfo& info)
+    {
+        sqlite3_stmt* stmt = nullptr;
+
+        if (sqlite3_prepare_v2(
+            db,
+            "SELECT id, kind, file_name, size, stored_name "
+            "FROM attachments WHERE id = ?;",
+            -1, &stmt, nullptr) != SQLITE_OK)
+        {
+            return false;
+        }
+
+        sqlite3_bind_int64(stmt, 1, attachmentId);
+
+        const bool found = sqlite3_step(stmt) == SQLITE_ROW;
+
+        if (found)
+            ReadAttachmentRow(stmt, info);
+
+        sqlite3_finalize(stmt);
+        return found;
+    }
+}
+
+bool Database::GetUserId(const std::string& username, int64_t& userId)
+{
+    userId = 0;
+
+    if (m_db == nullptr || username.empty())
+        return false;
+
+    sqlite3_stmt* stmt = nullptr;
+
+    if (sqlite3_prepare_v2(
+        m_db,
+        "SELECT id FROM users WHERE username = ?;",
+        -1, &stmt, nullptr) != SQLITE_OK)
+    {
+        return false;
+    }
+
+    sqlite3_bind_text(stmt, 1, username.c_str(), -1, SQLITE_TRANSIENT);
+
+    const bool found = sqlite3_step(stmt) == SQLITE_ROW;
+
+    if (found)
+        userId = sqlite3_column_int64(stmt, 0);
+
+    sqlite3_finalize(stmt);
+    return found;
+}
+
+bool Database::GetAvatarVersion(const std::string& username, int& version)
+{
+    version = 0;
+
+    if (m_db == nullptr || username.empty())
+        return false;
+
+    sqlite3_stmt* stmt = nullptr;
+
+    if (sqlite3_prepare_v2(
+        m_db,
+        "SELECT avatar_version FROM users WHERE username = ?;",
+        -1, &stmt, nullptr) != SQLITE_OK)
+    {
+        return false;
+    }
+
+    sqlite3_bind_text(stmt, 1, username.c_str(), -1, SQLITE_TRANSIENT);
+
+    const bool found = sqlite3_step(stmt) == SQLITE_ROW;
+
+    if (found)
+        version = sqlite3_column_int(stmt, 0);
+
+    sqlite3_finalize(stmt);
+    return found;
+}
+
+bool Database::BumpAvatarVersion(const std::string& username, int& newVersion)
+{
+    newVersion = 0;
+
+    if (m_db == nullptr || username.empty())
+        return false;
+
+    sqlite3_stmt* stmt = nullptr;
+
+    if (sqlite3_prepare_v2(
+        m_db,
+        "UPDATE users SET avatar_version = avatar_version + 1 "
+        "WHERE username = ?;",
+        -1, &stmt, nullptr) != SQLITE_OK)
+    {
+        return false;
+    }
+
+    sqlite3_bind_text(stmt, 1, username.c_str(), -1, SQLITE_TRANSIENT);
+
+    const bool updated =
+        sqlite3_step(stmt) == SQLITE_DONE && sqlite3_changes(m_db) > 0;
+
+    sqlite3_finalize(stmt);
+
+    return updated && GetAvatarVersion(username, newVersion);
+}
+
+bool Database::CreateAttachment(
+    const std::string& uploaderUsername,
+    const std::string& kind,
+    const std::string& fileName,
+    int64_t size,
+    int64_t& attachmentId)
+{
+    attachmentId = 0;
+
+    if (m_db == nullptr ||
+        uploaderUsername.empty() ||
+        kind.empty() ||
+        fileName.empty() ||
+        size <= 0)
+    {
+        return false;
+    }
+
+    sqlite3_stmt* stmt = nullptr;
+
+    if (sqlite3_prepare_v2(
+        m_db,
+        "INSERT INTO attachments (uploader_id, kind, file_name, size) "
+        "VALUES ((SELECT id FROM users WHERE username = ?), ?, ?, ?);",
+        -1, &stmt, nullptr) != SQLITE_OK)
+    {
+        return false;
+    }
+
+    sqlite3_bind_text(stmt, 1, uploaderUsername.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 2, kind.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(stmt, 3, fileName.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int64(stmt, 4, size);
+
+    const bool inserted = sqlite3_step(stmt) == SQLITE_DONE;
+
+    sqlite3_finalize(stmt);
+
+    if (!inserted)
+        return false;
+
+    attachmentId = sqlite3_last_insert_rowid(m_db);
+    return true;
+}
+
+bool Database::SetAttachmentStoredName(
+    int64_t attachmentId,
+    const std::string& storedName)
+{
+    if (m_db == nullptr || attachmentId <= 0 || storedName.empty())
+        return false;
+
+    sqlite3_stmt* stmt = nullptr;
+
+    if (sqlite3_prepare_v2(
+        m_db,
+        "UPDATE attachments SET stored_name = ? WHERE id = ?;",
+        -1, &stmt, nullptr) != SQLITE_OK)
+    {
+        return false;
+    }
+
+    sqlite3_bind_text(stmt, 1, storedName.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int64(stmt, 2, attachmentId);
+
+    const bool updated =
+        sqlite3_step(stmt) == SQLITE_DONE && sqlite3_changes(m_db) > 0;
+
+    sqlite3_finalize(stmt);
+    return updated;
+}
+
+bool Database::DeleteAttachment(int64_t attachmentId)
+{
+    if (m_db == nullptr || attachmentId <= 0)
+        return false;
+
+    sqlite3_stmt* stmt = nullptr;
+
+    if (sqlite3_prepare_v2(
+        m_db,
+        "DELETE FROM attachments WHERE id = ?;",
+        -1, &stmt, nullptr) != SQLITE_OK)
+    {
+        return false;
+    }
+
+    sqlite3_bind_int64(stmt, 1, attachmentId);
+
+    const bool deleted = sqlite3_step(stmt) == SQLITE_DONE;
+
+    sqlite3_finalize(stmt);
+    return deleted;
+}
+
+bool Database::BindAttachmentToUser(
+    int64_t attachmentId,
+    const std::string& senderUsername,
+    const std::string& recipientUsername,
+    AttachmentInfo& info)
+{
+    if (m_db == nullptr ||
+        attachmentId <= 0 ||
+        senderUsername.empty() ||
+        recipientUsername.empty() ||
+        senderUsername == recipientUsername)
+    {
+        return false;
+    }
+
+    int64_t senderId = 0;
+    int64_t recipientId = 0;
+
+    if (!GetUserId(senderUsername, senderId) ||
+        !GetUserId(recipientUsername, recipientId))
+    {
+        return false;
+    }
+
+    sqlite3_stmt* stmt = nullptr;
+
+    // Chỉ gắn được tệp của chính mình và chưa gắn vào tin nhắn nào.
+    if (sqlite3_prepare_v2(
+        m_db,
+        "UPDATE attachments SET recipient_id = ? "
+        "WHERE id = ? AND uploader_id = ? AND stored_name != '' "
+        "AND recipient_id IS NULL AND group_id IS NULL;",
+        -1, &stmt, nullptr) != SQLITE_OK)
+    {
+        return false;
+    }
+
+    sqlite3_bind_int64(stmt, 1, recipientId);
+    sqlite3_bind_int64(stmt, 2, attachmentId);
+    sqlite3_bind_int64(stmt, 3, senderId);
+
+    const bool bound =
+        sqlite3_step(stmt) == SQLITE_DONE && sqlite3_changes(m_db) == 1;
+
+    sqlite3_finalize(stmt);
+
+    return bound && LoadAttachmentById(m_db, attachmentId, info);
+}
+
+bool Database::BindAttachmentToGroup(
+    int64_t attachmentId,
+    const std::string& senderUsername,
+    int64_t groupId,
+    AttachmentInfo& info)
+{
+    if (m_db == nullptr ||
+        attachmentId <= 0 ||
+        groupId <= 0 ||
+        senderUsername.empty() ||
+        !IsGroupMember(groupId, senderUsername))
+    {
+        return false;
+    }
+
+    int64_t senderId = 0;
+
+    if (!GetUserId(senderUsername, senderId))
+        return false;
+
+    sqlite3_stmt* stmt = nullptr;
+
+    if (sqlite3_prepare_v2(
+        m_db,
+        "UPDATE attachments SET group_id = ? "
+        "WHERE id = ? AND uploader_id = ? AND stored_name != '' "
+        "AND recipient_id IS NULL AND group_id IS NULL;",
+        -1, &stmt, nullptr) != SQLITE_OK)
+    {
+        return false;
+    }
+
+    sqlite3_bind_int64(stmt, 1, groupId);
+    sqlite3_bind_int64(stmt, 2, attachmentId);
+    sqlite3_bind_int64(stmt, 3, senderId);
+
+    const bool bound =
+        sqlite3_step(stmt) == SQLITE_DONE && sqlite3_changes(m_db) == 1;
+
+    sqlite3_finalize(stmt);
+
+    return bound && LoadAttachmentById(m_db, attachmentId, info);
+}
+
+bool Database::GetAttachmentForUser(
+    int64_t attachmentId,
+    const std::string& username,
+    AttachmentInfo& info)
+{
+    if (m_db == nullptr || attachmentId <= 0 || username.empty())
+        return false;
+
+    const char* sql = R"(
+        SELECT a.id, a.kind, a.file_name, a.size, a.stored_name
+        FROM attachments a
+        JOIN users u ON u.username = ?
+        WHERE a.id = ?
+          AND a.stored_name != ''
+          AND (
+              a.uploader_id = u.id
+              OR a.recipient_id = u.id
+              OR EXISTS (
+                  SELECT 1 FROM group_members gm
+                  WHERE gm.group_id = a.group_id AND gm.user_id = u.id
+              )
+          );
+    )";
+
+    sqlite3_stmt* stmt = nullptr;
+
+    if (sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr) != SQLITE_OK)
+        return false;
+
+    sqlite3_bind_text(stmt, 1, username.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int64(stmt, 2, attachmentId);
+
+    const bool found = sqlite3_step(stmt) == SQLITE_ROW;
+
+    if (found)
+        ReadAttachmentRow(stmt, info);
+
+    sqlite3_finalize(stmt);
+    return found;
+}
+
+bool Database::GetOwnedAttachment(
+    int64_t attachmentId,
+    const std::string& username,
+    AttachmentInfo& info)
+{
+    if (m_db == nullptr || attachmentId <= 0 || username.empty())
+        return false;
+
+    const char* sql = R"(
+        SELECT a.id, a.kind, a.file_name, a.size, a.stored_name
+        FROM attachments a
+        JOIN users u ON u.username = ?
+        WHERE a.id = ? AND a.uploader_id = u.id AND a.stored_name != '';
+    )";
+
+    sqlite3_stmt* stmt = nullptr;
+
+    if (sqlite3_prepare_v2(m_db, sql, -1, &stmt, nullptr) != SQLITE_OK)
+        return false;
+
+    sqlite3_bind_text(stmt, 1, username.c_str(), -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int64(stmt, 2, attachmentId);
+
+    const bool found = sqlite3_step(stmt) == SQLITE_ROW;
+
+    if (found)
+        ReadAttachmentRow(stmt, info);
+
+    sqlite3_finalize(stmt);
+    return found;
 }

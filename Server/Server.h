@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -9,6 +9,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <cstdio>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -19,6 +20,22 @@
 constexpr unsigned short SERVER_PORT = 5000;
 constexpr uint32_t MAX_MESSAGE_SIZE = 1024 * 1024;
 
+// Phiên upload đang diễn ra của một client (mỗi client tối đa một phiên).
+// Chỉ được truy cập từ thread xử lý client đó nên không cần mutex.
+struct UploadSession
+{
+    bool active = false;
+    FILE* file = nullptr;
+
+    std::string uploadId;
+    std::string tempPath;
+    std::string fileName;
+    std::string kind;
+
+    int64_t declaredSize = 0;
+    int64_t received = 0;
+};
+
 struct ClientConnection
 {
     SOCKET socket = INVALID_SOCKET;
@@ -26,6 +43,8 @@ struct ClientConnection
     std::mutex sendMutex;
 
     std::string username;
+
+    UploadSession upload;
 
     std::atomic<bool> authenticated{ false };
     std::atomic<bool> closing{ false };

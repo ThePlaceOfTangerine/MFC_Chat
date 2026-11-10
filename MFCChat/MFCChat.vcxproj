@@ -192,6 +192,8 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="AutoRun.h" />
+    <ClInclude Include="Base64.h" />
+    <ClInclude Include="Ccreategroupdlg.h" />
     <ClInclude Include="ChatProtocol.h" />
     <ClInclude Include="CLoginDlg.h" />
     <ClInclude Include="CRegisterDlg.h" />
@@ -206,6 +208,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="AutoRun.cpp" />
+    <ClCompile Include="Ccreategroupdlg.cpp" />
     <ClCompile Include="CLoginDlg.cpp" />
     <ClCompile Include="CRegisterDlg.cpp" />
     <ClCompile Include="MFCChat.cpp" />

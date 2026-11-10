@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -71,6 +71,10 @@ public:
     bool RequestConversations();
 
     bool RequestHistory(const std::string& otherUsername);
+
+    // Gửi nguyên một gói JSON tới server (dùng cho upload/tải tệp/avatar).
+    // An toàn khi gọi từ nhiều thread.
+    bool SendRaw(const std::string& jsonPayload);
 
 private:
     SOCKET m_socket;

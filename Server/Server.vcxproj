@@ -145,6 +145,7 @@
     <ClCompile Include="sqlite3.c" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="Base64.h" />
     <ClInclude Include="Database.h" />
     <ClInclude Include="json.hpp" />
     <ClInclude Include="PasswordHash.h" />
