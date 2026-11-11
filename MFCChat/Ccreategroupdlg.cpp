@@ -8,11 +8,16 @@
 namespace
 {
 	// ID các control tạo bằng code (không trùng với resource.h).
-	const UINT kLabelNameId = 3001;
 	const UINT kEditNameId = 3002;
 	const UINT kLabelMembersId = 3003;
 	const UINT kListId = 3004;
 }
+
+BEGIN_MESSAGE_MAP(CCreateGroupDlg, CDialogEx)
+	ON_WM_CTLCOLOR()
+	ON_WM_DRAWITEM()
+	ON_LBN_SELCHANGE(kListId, &CCreateGroupDlg::OnSelChange)
+END_MESSAGE_MAP()
 
 CCreateGroupDlg::CCreateGroupDlg(
 	const std::vector<CString>& candidates,
@@ -30,62 +35,64 @@ BOOL CCreateGroupDlg::OnInitDialog()
 {
 	CDialogEx::OnInitDialog();
 
+	m_theme.Init(this);
+
 	SetWindowText(_T("Tạo nhóm mới"));
 
-	CRect rc;
-	GetClientRect(&rc);
+	const int clientWidth = 380;
+	const int clientHeight = 470;
+	const int margin = 32;
+	const int width = clientWidth - 2 * margin;
 
-	const int pad = 10;
-	const int width = rc.Width() - 2 * pad;
+	m_theme.ResizeClient(this, clientWidth, clientHeight);
 
-	m_labelName.Create(
-		_T("Tên nhóm:"), WS_CHILD | WS_VISIBLE,
-		CRect(pad, 10, pad + width, 28), this, kLabelNameId);
+	m_theme.CreateHeader(
+		this, _T("Tạo nhóm mới"), _T("Đặt tên và chọn thành viên cho nhóm"),
+		margin, 24, width);
 
 	m_editName.Create(
 		WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_BORDER | ES_AUTOHSCROLL,
-		CRect(pad, 30, pad + width, 54), this, kEditNameId);
+		m_theme.Box(margin, 100, width, 36), this, kEditNameId);
 	m_editName.SetLimitText(50);
+	m_editName.SetFont(&m_theme.fontInput);
+	m_editName.SetCueBanner(_T("Tên nhóm"), TRUE);
 
 	m_labelMembers.Create(
-		_T("Chọn thành viên (bấm để chọn / bỏ chọn):"),
-		WS_CHILD | WS_VISIBLE,
-		CRect(pad, 64, pad + width, 82), this, kLabelMembersId);
-
-	const int buttonTop = rc.Height() - 38;
+		_T(""), WS_CHILD | WS_VISIBLE | SS_LEFT | SS_NOPREFIX,
+		m_theme.Box(margin, 152, width, 22), this, kLabelMembersId);
+	m_labelMembers.SetFont(&m_theme.fontSmall);
 
 	m_list.Create(
-		WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_BORDER |
-		WS_VSCROLL | LBS_MULTIPLESEL | LBS_NOTIFY,
-		CRect(pad, 84, pad + width, buttonTop - 10), this, kListId);
+		WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_BORDER | WS_VSCROLL |
+		LBS_MULTIPLESEL | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT,
+		m_theme.Box(margin, 178, width, clientHeight - 178 - 88),
+		this, kListId);
+	m_list.SetFont(&m_theme.fontInput);
+	m_list.SetItemHeight(0, m_theme.S(30));
 
 	for (const CString& name : m_candidates)
 		m_list.AddString(name);
 
-	const int buttonWidth = 80;
-
-	m_ok.Create(
-		_T("Tạo"),
-		WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
-		CRect(rc.Width() - pad - 2 * buttonWidth - 8, buttonTop,
-			rc.Width() - pad - buttonWidth - 8, buttonTop + 26),
-		this, IDOK);
+	// Hai nút nằm cạnh nhau ở đáy: Hủy (phụ) và Tạo nhóm (chính).
+	const int buttonTop = clientHeight - 64;
+	const int cancelWidth = 110;
+	const int gap = 12;
 
 	m_cancel.Create(
 		_T("Hủy"),
-		WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
-		CRect(rc.Width() - pad - buttonWidth, buttonTop,
-			rc.Width() - pad, buttonTop + 26),
+		WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
+		m_theme.Box(margin, buttonTop, cancelWidth, 40),
 		this, IDCANCEL);
 
-	CFont* font = GetFont();
+	m_ok.Create(
+		_T("Tạo nhóm"),
+		WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
+		m_theme.Box(
+			margin + cancelWidth + gap, buttonTop,
+			width - cancelWidth - gap, 40),
+		this, IDOK);
 
-	m_labelName.SetFont(font);
-	m_editName.SetFont(font);
-	m_labelMembers.SetFont(font);
-	m_list.SetFont(font);
-	m_ok.SetFont(font);
-	m_cancel.SetFont(font);
+	UpdateSelectedCount();
 
 	m_editName.SetFocus();
 
@@ -125,6 +132,42 @@ void CCreateGroupDlg::OnOK()
 	CDialogEx::OnOK();
 }
 
+HBRUSH CCreateGroupDlg::OnCtlColor(CDC* pDC, CWnd* pWnd, UINT nCtlColor)
+{
+	HBRUSH brush = CDialogEx::OnCtlColor(pDC, pWnd, nCtlColor);
+
+	dlgtheme::ApplyCtlColor(pDC, pWnd, 0, kLabelMembersId);
+
+	return brush;
+}
+
+void CCreateGroupDlg::OnDrawItem(int nIDCtl, LPDRAWITEMSTRUCT lpDrawItemStruct)
+{
+	if (lpDrawItemStruct != nullptr &&
+		(nIDCtl == IDOK || nIDCtl == IDCANCEL))
+	{
+		// Tạo nhóm = nút chính (xanh); Hủy = nút phụ.
+		dlgtheme::DrawButton(
+			lpDrawItemStruct, &m_theme.fontButton, nIDCtl == IDOK);
+		return;
+	}
+
+	CDialogEx::OnDrawItem(nIDCtl, lpDrawItemStruct);
+}
+
+void CCreateGroupDlg::OnSelChange()
+{
+	UpdateSelectedCount();
+}
+
+void CCreateGroupDlg::UpdateSelectedCount()
+{
+	CString text;
+	text.Format(_T("Thành viên (đã chọn %d)"), m_list.GetSelCount());
+
+	m_labelMembers.SetWindowText(text);
+}
+
 void CCreateGroupDlg::BuildTemplate()
 {
 	const wchar_t title[] = L"Tạo nhóm mới";
@@ -136,7 +179,7 @@ void CCreateGroupDlg::BuildTemplate()
 	dt.cdit = 0;
 	dt.x = 0;
 	dt.y = 0;
-	dt.cx = 190;   // dialog units
+	dt.cx = 190;   // dialog units (kích thước thật được đặt lại trong OnInitDialog)
 	dt.cy = 200;
 
 	auto append = [this](const void* data, size_t size)

@@ -197,6 +197,7 @@
     <ClInclude Include="ChatProtocol.h" />
     <ClInclude Include="CLoginDlg.h" />
     <ClInclude Include="CRegisterDlg.h" />
+    <ClInclude Include="Dialogtheme.h" />
     <ClInclude Include="framework.h" />
     <ClInclude Include="json.hpp" />
     <ClInclude Include="MFCChat.h" />

@@ -1,4 +1,4 @@
-// CLoginDlg.cpp : implementation file
+﻿// CLoginDlg.cpp : implementation file
 //
 
 #include "pch.h"
@@ -37,6 +37,8 @@ BOOL CLoginDlg::OnInitDialog()
 		IsAutoRunEnabled() ? BST_CHECKED : BST_UNCHECKED
 	);
 
+	ApplyStyle();
+
 	return TRUE;
 }
 
@@ -52,6 +54,8 @@ void CLoginDlg::DoDataExchange(CDataExchange* pDX)
 BEGIN_MESSAGE_MAP(CLoginDlg, CDialogEx)
 	ON_BN_CLICKED(IDC_BUTTON_REGISTER, &CLoginDlg::OnBnClickedButtonRegister)
 	ON_BN_CLICKED(IDC_BUTTON_LOGIN, &CLoginDlg::OnBnClickedButtonLogin)
+	ON_WM_CTLCOLOR()
+	ON_WM_DRAWITEM()
 END_MESSAGE_MAP()
 
 
@@ -59,78 +63,78 @@ END_MESSAGE_MAP()
 
 void CLoginDlg::OnBnClickedButtonLogin()
 {
-    if (!UpdateData(TRUE))
-        return;
+	if (!UpdateData(TRUE))
+		return;
 
-    m_strUsername.Trim();
+	m_strUsername.Trim();
 
-    if (m_strUsername.IsEmpty() || m_strPassword.IsEmpty())
-    {
-        SetDlgItemText(
-            IDC_LOGIN_ERROR,
-            _T("Please fill in all fields."));
-        return;
-    }
+	if (m_strUsername.IsEmpty() || m_strPassword.IsEmpty())
+	{
+		SetDlgItemText(
+			IDC_LOGIN_ERROR,
+			_T("Please fill in all fields."));
+		return;
+	}
 
-    CT2A usernameUtf8(m_strUsername, CP_UTF8);
-    CT2A passwordUtf8(m_strPassword, CP_UTF8);
+	CT2A usernameUtf8(m_strUsername, CP_UTF8);
+	CT2A passwordUtf8(m_strPassword, CP_UTF8);
 
-    TcpChatClient client;
+	TcpChatClient client;
 
-    if (!client.Connect("127.0.0.1", 5000))
-    {
-        SetDlgItemText(
-            IDC_LOGIN_ERROR,
-            _T("Cannot connect to TCP server."));
-        return;
-    }
+	if (!client.Connect("127.0.0.1", 5000))
+	{
+		SetDlgItemText(
+			IDC_LOGIN_ERROR,
+			_T("Cannot connect to TCP server."));
+		return;
+	}
 
-    bool authenticated = client.Login(
-        static_cast<const char*>(usernameUtf8),
-        static_cast<const char*>(passwordUtf8));
+	bool authenticated = client.Login(
+		static_cast<const char*>(usernameUtf8),
+		static_cast<const char*>(passwordUtf8));
 
-    std::string errorMessage = client.GetLastErrorMessage();
+	std::string errorMessage = client.GetLastErrorMessage();
 
-    client.Disconnect();
+	client.Disconnect();
 
-    if (!authenticated)
-    {
-        CA2T errorText(errorMessage.c_str(), CP_UTF8);
+	if (!authenticated)
+	{
+		CA2T errorText(errorMessage.c_str(), CP_UTF8);
 
-        SetDlgItemText(
-            IDC_LOGIN_ERROR,
-            errorMessage.empty()
-            ? _T("Invalid username or password.")
-            : static_cast<LPCTSTR>(errorText));
+		SetDlgItemText(
+			IDC_LOGIN_ERROR,
+			errorMessage.empty()
+			? _T("Invalid username or password.")
+			: static_cast<LPCTSTR>(errorText));
 
-        return;
-    }
+		return;
+	}
 
-    bool autoRunSuccess = false;
+	bool autoRunSuccess = false;
 
-    if (m_checkAutoRun.GetCheck() == BST_CHECKED)
-        autoRunSuccess = EnableAutoRun();
-    else
-        autoRunSuccess = DisableAutoRun();
+	if (m_checkAutoRun.GetCheck() == BST_CHECKED)
+		autoRunSuccess = EnableAutoRun();
+	else
+		autoRunSuccess = DisableAutoRun();
 
-    if (!autoRunSuccess)
-    {
-        AfxMessageBox(
-            _T("Cannot update Windows startup setting."));
-        return;
-    }
+	if (!autoRunSuccess)
+	{
+		AfxMessageBox(
+			_T("Cannot update Windows startup setting."));
+		return;
+	}
 
-    EndDialog(IDOK);
+	EndDialog(IDOK);
 }
 
 CString CLoginDlg::GetUsername() const
 {
-    return m_strUsername;
+	return m_strUsername;
 }
 
 CString CLoginDlg::GetPassword() const
 {
-    return m_strPassword;
+	return m_strPassword;
 }
 
 
@@ -142,3 +146,85 @@ void CLoginDlg::OnBnClickedButtonRegister()
 	dlg.DoModal();
 }
 
+// ------------------------------------------------------------------ Giao diện
+
+// Sắp xếp lại bố cục và áp dụng giao diện chung (xem DialogTheme.h).
+void CLoginDlg::ApplyStyle()
+{
+	m_theme.Init(this);
+
+	SetWindowText(_T("MFC Chat - Đăng nhập"));
+
+	const int margin = 40;
+	const int width = 320;
+
+	m_theme.ResizeClient(this, 400, 392);
+
+	m_theme.CreateHeader(
+		this, _T("Đăng nhập"), _T("Chào mừng quay lại MFC Chat"),
+		margin, 30, width);
+
+	// Ẩn các nhãn cũ ("Username:", "Password:"...); dùng chữ gợi ý trong ô nhập.
+	m_theme.HideOtherChildren(this, {
+		IDC_LOGIN_USERNAME, IDC_LOGIN_PASSWORD, IDC_CHECK_AUTORUN,
+		IDC_LOGIN_ERROR, IDC_BUTTON_LOGIN, IDC_BUTTON_REGISTER });
+
+	m_theme.StyleEdit(
+		this, IDC_LOGIN_USERNAME, _T("Tên đăng nhập"),
+		m_theme.Box(margin, 112, width, 36));
+
+	m_theme.StyleEdit(
+		this, IDC_LOGIN_PASSWORD, _T("Mật khẩu"),
+		m_theme.Box(margin, 160, width, 36));
+
+	m_theme.Place(
+		this, IDC_CHECK_AUTORUN,
+		m_theme.Box(margin, 208, width, 24), &m_theme.fontSmall);
+
+	// Nhãn báo lỗi: chữ đỏ, căn giữa, ban đầu để trống.
+	SetDlgItemText(IDC_LOGIN_ERROR, _T(""));
+
+	if (CWnd* error = GetDlgItem(IDC_LOGIN_ERROR))
+		error->ModifyStyle(SS_TYPEMASK, SS_CENTER);
+
+	m_theme.Place(
+		this, IDC_LOGIN_ERROR,
+		m_theme.Box(margin, 238, width, 36), &m_theme.fontSmall);
+
+	m_theme.MakeOwnerDraw(
+		this, IDC_BUTTON_LOGIN, _T("Đăng nhập"),
+		m_theme.Box(margin, 282, width, 42));
+
+	m_theme.MakeOwnerDraw(
+		this, IDC_BUTTON_REGISTER, _T("Tạo tài khoản mới"),
+		m_theme.Box(margin, 334, width, 38));
+}
+
+// Nhấn Enter trong ô nhập = bấm nút Đăng nhập (trước đây Enter đóng hộp thoại).
+void CLoginDlg::OnOK()
+{
+	OnBnClickedButtonLogin();
+}
+
+HBRUSH CLoginDlg::OnCtlColor(CDC* pDC, CWnd* pWnd, UINT nCtlColor)
+{
+	HBRUSH brush = CDialogEx::OnCtlColor(pDC, pWnd, nCtlColor);
+
+	dlgtheme::ApplyCtlColor(pDC, pWnd, IDC_LOGIN_ERROR);
+
+	return brush;
+}
+
+void CLoginDlg::OnDrawItem(int nIDCtl, LPDRAWITEMSTRUCT lpDrawItemStruct)
+{
+	if (lpDrawItemStruct != nullptr &&
+		(nIDCtl == IDC_BUTTON_LOGIN || nIDCtl == IDC_BUTTON_REGISTER))
+	{
+		// Đăng nhập = nút chính (xanh); Tạo tài khoản = nút phụ.
+		dlgtheme::DrawButton(
+			lpDrawItemStruct, &m_theme.fontButton, nIDCtl == IDC_BUTTON_LOGIN);
+		return;
+	}
+
+	CDialogEx::OnDrawItem(nIDCtl, lpDrawItemStruct);
+}

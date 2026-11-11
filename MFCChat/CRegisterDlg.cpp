@@ -44,6 +44,9 @@ BEGIN_MESSAGE_MAP(CRegisterDlg, CDialogEx)
         IDCANCEL,
         &CRegisterDlg::OnBnClickedCancel
     )
+
+    ON_WM_CTLCOLOR()
+    ON_WM_DRAWITEM()
 END_MESSAGE_MAP()
 
 void CRegisterDlg::OnBnClickedButtonRegister()
@@ -147,4 +150,91 @@ void CRegisterDlg::OnBnClickedButtonRegister()
 void CRegisterDlg::OnBnClickedCancel()
 {
     CDialogEx::OnCancel();
+}
+
+// ------------------------------------------------------------------ Giao diện
+
+BOOL CRegisterDlg::OnInitDialog()
+{
+    CDialogEx::OnInitDialog();
+
+    m_theme.Init(this);
+
+    SetWindowText(_T("MFC Chat - Đăng ký"));
+
+    const int margin = 40;
+    const int width = 320;
+
+    m_theme.ResizeClient(this, 400, 410);
+
+    m_theme.CreateHeader(
+        this, _T("Tạo tài khoản"), _T("Điền thông tin để bắt đầu trò chuyện"),
+        margin, 30, width);
+
+    // Ẩn các nhãn cũ; dùng chữ gợi ý trong ô nhập.
+    m_theme.HideOtherChildren(this, {
+        IDC_REGISTER_USERNAME, IDC_REGISTER_PASSWORD,
+        IDC_REGISTER_CONFIRM_PASSWORD, IDC_REGISTER_ERROR,
+        IDC_BUTTON_REGISTER, IDCANCEL });
+
+    m_theme.StyleEdit(
+        this, IDC_REGISTER_USERNAME, _T("Tên đăng nhập"),
+        m_theme.Box(margin, 112, width, 36));
+
+    m_theme.StyleEdit(
+        this, IDC_REGISTER_PASSWORD, _T("Mật khẩu"),
+        m_theme.Box(margin, 160, width, 36));
+
+    m_theme.StyleEdit(
+        this, IDC_REGISTER_CONFIRM_PASSWORD, _T("Nhập lại mật khẩu"),
+        m_theme.Box(margin, 208, width, 36));
+
+    // Nhãn báo lỗi: chữ đỏ, căn giữa, ban đầu để trống.
+    SetDlgItemText(IDC_REGISTER_ERROR, _T(""));
+
+    if (CWnd* error = GetDlgItem(IDC_REGISTER_ERROR))
+        error->ModifyStyle(SS_TYPEMASK, SS_CENTER);
+
+    m_theme.Place(
+        this, IDC_REGISTER_ERROR,
+        m_theme.Box(margin, 256, width, 36), &m_theme.fontSmall);
+
+    m_theme.MakeOwnerDraw(
+        this, IDC_BUTTON_REGISTER, _T("Đăng ký"),
+        m_theme.Box(margin, 300, width, 42));
+
+    m_theme.MakeOwnerDraw(
+        this, IDCANCEL, _T("Hủy"),
+        m_theme.Box(margin, 352, width, 38));
+
+    return TRUE;
+}
+
+// Nhấn Enter trong ô nhập = bấm nút Đăng ký.
+void CRegisterDlg::OnOK()
+{
+    OnBnClickedButtonRegister();
+}
+
+HBRUSH CRegisterDlg::OnCtlColor(CDC* pDC, CWnd* pWnd, UINT nCtlColor)
+{
+    HBRUSH brush = CDialogEx::OnCtlColor(pDC, pWnd, nCtlColor);
+
+    dlgtheme::ApplyCtlColor(pDC, pWnd, IDC_REGISTER_ERROR);
+
+    return brush;
+}
+
+void CRegisterDlg::OnDrawItem(int nIDCtl, LPDRAWITEMSTRUCT lpDrawItemStruct)
+{
+    if (lpDrawItemStruct != nullptr &&
+        (nIDCtl == IDC_BUTTON_REGISTER || nIDCtl == IDCANCEL))
+    {
+        // Đăng ký = nút chính (xanh); Hủy = nút phụ.
+        dlgtheme::DrawButton(
+            lpDrawItemStruct, &m_theme.fontButton, nIDCtl == IDC_BUTTON_REGISTER);
+        return;
+    }
+
+    CDialogEx::OnDrawItem(nIDCtl, lpDrawItemStruct);
 }

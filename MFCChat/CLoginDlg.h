@@ -1,6 +1,7 @@
-#pragma once
+﻿#pragma once
 
 #include "afxdialogex.h"
+#include "DialogTheme.h"
 
 class CLoginDlg : public CDialogEx
 {
@@ -31,4 +32,15 @@ public:
     CString GetPassword() const;
 
     CButton m_checkAutoRun;
+
+protected:
+    virtual void OnOK() override;   // Enter = đăng nhập
+
+    afx_msg HBRUSH OnCtlColor(CDC* pDC, CWnd* pWnd, UINT nCtlColor);
+    afx_msg void OnDrawItem(int nIDCtl, LPDRAWITEMSTRUCT lpDrawItemStruct);
+
+private:
+    void ApplyStyle();
+
+    dlgtheme::Theme m_theme;
 };

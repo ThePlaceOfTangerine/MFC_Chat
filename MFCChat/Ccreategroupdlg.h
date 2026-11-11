@@ -2,9 +2,11 @@
 
 #include <vector>
 #include "afxdialogex.h"
+#include "DialogTheme.h"
 
 // Hộp thoại "Tạo nhóm": nhập tên nhóm và chọn các thành viên.
-// Giao diện được dựng hoàn toàn bằng code (không cần resource trong file .rc).
+// Giao diện được dựng hoàn toàn bằng code (không cần resource trong file .rc)
+// và dùng chung kiểu dáng với màn hình đăng nhập/đăng ký (xem DialogTheme.h).
 //
 // Cách dùng:
 //     CCreateGroupDlg dlg(danhSachUsername, this);
@@ -28,10 +30,19 @@ protected:
 	virtual BOOL OnInitDialog() override;
 	virtual void OnOK() override;
 
+	afx_msg HBRUSH OnCtlColor(CDC* pDC, CWnd* pWnd, UINT nCtlColor);
+	afx_msg void OnDrawItem(int nIDCtl, LPDRAWITEMSTRUCT lpDrawItemStruct);
+	afx_msg void OnSelChange();
+
+	DECLARE_MESSAGE_MAP()
+
 private:
 	// Dựng DLGTEMPLATE trong bộ nhớ: chỉ có khung và tiêu đề,
 	// các control được tạo trong OnInitDialog.
 	void BuildTemplate();
+
+	// Cập nhật dòng "Thành viên (đã chọn N)".
+	void UpdateSelectedCount();
 
 	std::vector<CString> m_candidates;   // username có thể chọn
 	std::vector<BYTE> m_template;        // dữ liệu DLGTEMPLATE
@@ -39,7 +50,8 @@ private:
 	CString m_groupName;
 	std::vector<CString> m_selected;
 
-	CStatic m_labelName;
+	dlgtheme::Theme m_theme;
+
 	CEdit m_editName;
 	CStatic m_labelMembers;
 	CListBox m_list;

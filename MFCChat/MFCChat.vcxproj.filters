@@ -57,6 +57,9 @@
     <ClInclude Include="Ccreategroupdlg.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="Dialogtheme.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="MFCChat.cpp">
